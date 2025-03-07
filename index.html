@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    #map { height: 600px; }
+    .controls { margin: 10px; font-family: Arial, sans-serif; }
+    .controls label { margin-right: 15px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="controls">
+    <label><input type="checkbox" id="ovision" checked> Ovision Model (Red)</label>
+    <label><input type="checkbox" id="yolov11_processed" checked> YOLOv11 Processed (Blue)</label>
+    <label><input type="checkbox" id="yolov11" checked> YOLOv11 (Green)</label>
+  </div>
+
+  <script>
+    // 맵 초기화
+    var map = L.map('map').setView([37.5375002076363167, 126.9374958771179252], 8);
+    console.log("Map initialized at:", map.getCenter(), "Zoom:", map.getZoom());
+
+    // TIFF 타일 레이어
+    L.tileLayer('web_tile/{z}/{x}/{y}.png', {
+      minZoom: 0,
+      maxZoom: 10, // web_tile/10까지 있음
+      attribution: 'TIFF Background'
+    }).addTo(map);
+    console.log("Tile layer added with path: web_tile/{z}/{x}/{y}.png");
+
+    // 범위 조정
+    map.fitBounds([
+      [37.5245364496177416, 126.9244086784872678],
+      [37.5504639656548918, 126.9505830757485825]
+    ]);
+    console.log("Bounds set to:", map.getBounds().toBBoxString());
+
+    // GeoJSON 레이어
+    var layers = {};
+
+    fetch('ovision_vehicle_OD_4326.geojson')
+      .then(res => res.json())
+      .then(data => {
+        layers.ovision = L.geoJSON(data, {
+          style: { color: 'red', weight: 2 },
+          onEachFeature: (feature, layer) => layer.bindPopup(feature.properties.name || "Vehicle (Ovision)")
+        }).addTo(map);
+        document.getElementById('ovision').addEventListener('change', (e) => {
+          if (e.target.checked) map.addLayer(layers.ovision);
+          else map.removeLayer(layers.ovision);
+        });
+        console.log("Ovision layer loaded with", data.features.length, "features");
+      })
+      .catch(err => console.error("Ovision fetch error:", err));
+
+    fetch('yolov11_processed_vehicle_OD_4326.geojson')
+      .then(res => res.json())
+      .then(data => {
+        layers.yolov11_processed = L.geoJSON(data, {
+          style: { color: 'blue', weight: 2 },
+          onEachFeature: (feature, layer) => layer.bindPopup(feature.properties.name || "Vehicle (YOLOv11 Processed)")
+        }).addTo(map);
+        document.getElementById('yolov11_processed').addEventListener('change', (e) => {
+          if (e.target.checked) map.addLayer(layers.yolov11_processed);
+          else map.removeLayer(layers.yolov11_processed);
+        });
+        console.log("YOLOv11 Processed layer loaded with", data.features.length, "features");
+      })
+      .catch(err => console.error("YOLOv11 Processed fetch error:", err));
+
+    fetch('yolov11_vehicle_OD_4326.geojson')
+      .then(res => res.json())
+      .then(data => {
+        layers.yolov11 = L.geoJSON(data, {
+          style: { color: 'green', weight: 2 },
+          onEachFeature: (feature, layer) => layer.bindPopup(feature.properties.name || "Vehicle (YOLOv11)")
+        }).addTo(map);
+        document.getElementById('yolov11').addEventListener('change', (e) => {
+          if (e.target.checked) map.addLayer(layers.yolov11);
+          else map.removeLayer(layers.yolov11);
+        });
+        console.log("YOLOv11 layer loaded with", data.features.length, "features");
+      })
+      .catch(err => console.error("YOLOv11 fetch error:", err));
+  </script>
+</body>
+</html>
