@@ -1,89 +1,509 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <style>
-    #map { height: 600px; }
-    .controls { margin: 10px; font-family: Arial, sans-serif; }
-    .controls label { margin-right: 15px; }
-  </style>
+    <meta charset="utf-8" />
+    <title>드론 정사영상 차량 탐지 비교 시각화</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+    
+    <!-- Mapbox GL JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mapbox-gl/2.15.0/mapbox-gl.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/mapbox-gl/2.15.0/mapbox-gl.css" rel="stylesheet" />
+    
+    <!-- Turf.js for GeoJSON processing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 10px;
+            background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            z-index: 1;
+            width: 250px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        
+        .model-container {
+            margin-bottom: 15px;
+        }
+        
+        .model-toggle {
+            margin-bottom: 5px;
+        }
+        
+        .color-box {
+            display: inline-block;
+            width: 15px;
+            height: 15px;
+            margin-right: 5px;
+            vertical-align: middle;
+        }
+        
+        .stats-panel {
+            margin-top: 20px;
+            padding-top: 10px;
+            border-top: 1px solid #ccc;
+        }
+        
+        .stats-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .opacity-control {
+            margin-top: 15px;
+        }
+        
+        .layer-control {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #ccc;
+        }
+        
+        /* 로딩 인디케이터 스타일 */
+        .loading-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 15px 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+        
+        .spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            font-weight: bold;
+        }
+        
+        .load-button {
+            margin-top: 10px;
+            padding: 8px 12px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        .load-button:hover {
+            background-color: #45a049;
+        }
+        
+        .load-button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        
+        /* Mapbox 타일셋 ID 입력 필드 */
+        .tileset-input {
+            margin-top: 10px;
+            margin-bottom: 10px;
+            width: 100%;
+        }
+        
+        /* 설정 패널 */
+        .settings-panel {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #ccc;
+        }
+        
+        .mapbox-token-input {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+    </style>
 </head>
 <body>
-  <div id="map"></div>
-  <div class="controls">
-    <label><input type="checkbox" id="ovision" checked> Ovision Model (Red)</label>
-    <label><input type="checkbox" id="yolov11_processed" checked> YOLOv11 Processed (Blue)</label>
-    <label><input type="checkbox" id="yolov11" checked> YOLOv11 (Green)</label>
-  </div>
+    <div id="map"></div>
+    
+    <div id="loading-indicator" class="loading-indicator">
+        <div class="spinner"></div>
+        <div class="loading-text">지도 로딩 중...</div>
+    </div>
+    
+    <div class="control-panel">
+        <div class="title">차량 탐지 모델 비교</div>
+        
+        <!-- 설정 패널 제거 -->
+        
+        <div class="layer-control">
+            <label>
+                <input type="checkbox" id="drone-imagery" checked disabled />
+                드론 정사영상 표시
+            </label>
+            <div class="opacity-control">
+                <label>정사영상 투명도: <span id="opacity-value">100%</span></label>
+                <input type="range" id="opacity-slider" min="0" max="100" value="100" />
+            </div>
+        </div>
+        
+        <div class="model-container">
+            <div class="model-toggle">
+                <label>
+                    <input type="checkbox" id="model1" checked disabled />
+                    <div class="color-box" style="background-color: #FF5733;"></div>
+                    모델 1 (ovision)
+                </label>
+                <button id="load-model1" class="load-button" disabled>데이터 로드</button>
+            </div>
+            
+            <div class="model-toggle">
+                <label>
+                    <input type="checkbox" id="model2" checked disabled />
+                    <div class="color-box" style="background-color: #33A1FF;"></div>
+                    모델 2 (yolov11x-obb + img처리)
+                </label>
+                <button id="load-model2" class="load-button" disabled>데이터 로드</button>
+            </div>
+            
+            <div class="model-toggle">
+                <label>
+                    <input type="checkbox" id="model3" checked disabled />
+                    <div class="color-box" style="background-color: #33FF57;"></div>
+                    모델 3 (yolov11x-obb)
+                </label>
+                <button id="load-model3" class="load-button" disabled>데이터 로드</button>
+            </div>
+        </div>
+        
+        <div class="stats-panel">
+            <div class="stats-title">모델 비교 통계</div>
+            <div id="stats-content">
+                <p><strong>모델 1:</strong> <span id="model1-count">0</span>개 차량 감지</p>
+                <p><strong>모델 2:</strong> <span id="model2-count">0</span>개 차량 감지</p>
+                <p><strong>모델 3:</strong> <span id="model3-count">0</span>개 차량 감지</p>
+            </div>
+        </div>
+    </div>
 
-  <script>
-    // 맵 초기화
-    var map = L.map('map').setView([37.5375002076363167, 126.9374958771179252], 8);
-    console.log("Map initialized at:", map.getCenter(), "Zoom:", map.getZoom());
+    <script>
+        // GeoJSON 파일 경로 설정
+        const model1Path = 'data/ovision_vehicle_OD_4326.geojson';
+        const model2Path = 'data/yolov11_processed_vehicle_OD_4326.geojson';
+        const model3Path = 'data/yolov11_vehicle_OD_4326.geojson';
+        
+        // 초기 Mapbox 맵 생성 (배경 없이)
+        const mapboxToken = 'pk.eyJ1Ijoia2ltcHlrMzY1IiwiYSI6ImNtMHZ0YjJreTFqMWkyanBsdG1rYzNna2EifQ.uO2Mr3dd8pnztKfGtZLFCw';
+        mapboxgl.accessToken = mapboxToken;
 
-    // TIFF 타일 레이어
-    L.tileLayer('web_tile/{z}/{x}/{y}.png', {
-      minZoom: 0,
-      maxZoom: 10, // web_tile/10까지 있음
-      attribution: 'TIFF Background'
-    }).addTo(map);
-    console.log("Tile layer added with path: web_tile/{z}/{x}/{y}.png");
-
-    // 범위 조정
-    map.fitBounds([
-      [37.5245364496177416, 126.9244086784872678],
-      [37.5504639656548918, 126.9505830757485825]
-    ]);
-    console.log("Bounds set to:", map.getBounds().toBBoxString());
-
-    // GeoJSON 레이어
-    var layers = {};
-
-    fetch('ovision_vehicle_OD_4326.geojson')
-      .then(res => res.json())
-      .then(data => {
-        layers.ovision = L.geoJSON(data, {
-          style: { color: 'red', weight: 2 },
-          onEachFeature: (feature, layer) => layer.bindPopup(feature.properties.name || "Vehicle (Ovision)")
-        }).addTo(map);
-        document.getElementById('ovision').addEventListener('change', (e) => {
-          if (e.target.checked) map.addLayer(layers.ovision);
-          else map.removeLayer(layers.ovision);
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: {
+                version: 8,
+                sources: {},
+                layers: []
+            },
+            center: [126.9374958771179, 37.5375002076363],
+            zoom: 16,
+            maxZoom: 20,
+            minZoom: 14,
+            renderWorldCopies: false
         });
-        console.log("Ovision layer loaded with", data.features.length, "features");
-      })
-      .catch(err => console.error("Ovision fetch error:", err));
 
-    fetch('yolov11_processed_vehicle_OD_4326.geojson')
-      .then(res => res.json())
-      .then(data => {
-        layers.yolov11_processed = L.geoJSON(data, {
-          style: { color: 'blue', weight: 2 },
-          onEachFeature: (feature, layer) => layer.bindPopup(feature.properties.name || "Vehicle (YOLOv11 Processed)")
-        }).addTo(map);
-        document.getElementById('yolov11_processed').addEventListener('change', (e) => {
-          if (e.target.checked) map.addLayer(layers.yolov11_processed);
-          else map.removeLayer(layers.yolov11_processed);
+        // 데이터 로딩 상태 변수
+        let tilesetLoaded = false;
+        let model1Loaded = false;
+        let model2Loaded = false;
+        let model3Loaded = false;
+        
+        // 지도 로드 완료 후 실행
+        map.on('load', function() {
+            // 초기 범위 설정
+            map.fitBounds([
+                [126.9244086784872678, 37.5245364496177416],
+                [126.9505830757485825, 37.5504639656548918]
+            ]);
+            
+            // 고정된 타일셋 ID 사용 (미리 설정됨)
+            const tilesetId = 'kimpyk365.3yckxotp';
+            
+            try {
+                // Mapbox Raster Tiles 소스 추가
+                map.addSource('raster-tiles', {
+                    'type': 'raster',
+                    'url': `mapbox://${tilesetId}`,
+                    'tileSize': 256
+                });
+                
+                // 래스터 레이어 추가
+                map.addLayer({
+                    'id': 'raster-tiles',
+                    'type': 'raster',
+                    'source': 'raster-tiles',
+                    'paint': {
+                        'raster-opacity': 1
+                    }
+                });
+                
+                // 타일셋 로딩 상태 업데이트
+                tilesetLoaded = true;
+                document.getElementById('drone-imagery').disabled = false;
+                document.getElementById('drone-imagery').checked = true;
+                
+                // 모델 1 로드 버튼 활성화
+                document.getElementById('load-model1').disabled = false;
+                
+                // 모델 1 자동 로드
+                loadModel1();
+                
+            } catch (error) {
+                console.error('타일셋 로드 오류:', error);
+                document.getElementById('loading-indicator').querySelector('.loading-text').textContent = '타일셋 로드 실패';
+                setTimeout(() => {
+                    document.getElementById('loading-indicator').style.display = 'none';
+                }, 2000);
+            }
         });
-        console.log("YOLOv11 Processed layer loaded with", data.features.length, "features");
-      })
-      .catch(err => console.error("YOLOv11 Processed fetch error:", err));
 
-    fetch('yolov11_vehicle_OD_4326.geojson')
-      .then(res => res.json())
-      .then(data => {
-        layers.yolov11 = L.geoJSON(data, {
-          style: { color: 'green', weight: 2 },
-          onEachFeature: (feature, layer) => layer.bindPopup(feature.properties.name || "Vehicle (YOLOv11)")
-        }).addTo(map);
-        document.getElementById('yolov11').addEventListener('change', (e) => {
-          if (e.target.checked) map.addLayer(layers.yolov11);
-          else map.removeLayer(layers.yolov11);
+        // 모델 1 데이터 로드 함수
+        function loadModel1() {
+            if (model1Loaded) return;
+            
+            const loadingIndicator = document.getElementById('loading-indicator');
+            const loadingText = loadingIndicator.querySelector('.loading-text');
+            
+            loadingIndicator.style.display = 'flex';
+            loadingText.textContent = '모델 1 데이터 로딩 중...';
+            
+            document.getElementById('load-model1').disabled = true;
+            
+            // GeoJSON 데이터 로드
+            fetch(model1Path)
+                .then(response => response.json())
+                .then(data => {
+                    console.log('모델 1 데이터 로드 완료');
+                    
+                    // 소스 추가
+                    map.addSource('model1-source', {
+                        'type': 'geojson',
+                        'data': data
+                    });
+                    
+                    // 레이어 추가
+                    map.addLayer({
+                        'id': 'model1-layer',
+                        'type': 'fill',
+                        'source': 'model1-source',
+                        'paint': {
+                            'fill-color': '#FF5733',
+                            'fill-opacity': 0.7,
+                            'fill-outline-color': '#FF0000'
+                        }
+                    });
+                    
+                    // 상태 업데이트
+                    model1Loaded = true;
+                    document.getElementById('model1-count').textContent = data.features.length;
+                    document.getElementById('model1').disabled = false;
+                    
+                    // 모델 2 로드 버튼 활성화
+                    document.getElementById('load-model2').disabled = false;
+                    
+                    // 모델 2 자동 로드
+                    loadModel2();
+                    
+                    // 로딩 인디케이터 숨기기
+                    loadingIndicator.style.display = 'none';
+                })
+                .catch(error => {
+                    console.error('모델 1 데이터 로드 오류:', error);
+                    loadingText.textContent = '모델 1 데이터 로드 실패';
+                    setTimeout(() => {
+                        loadingIndicator.style.display = 'none';
+                        document.getElementById('load-model1').disabled = false;
+                    }, 2000);
+                });
+        }
+
+        // 모델 2 데이터 로드 함수
+        function loadModel2() {
+            if (model2Loaded) return;
+            
+            const loadingIndicator = document.getElementById('loading-indicator');
+            const loadingText = loadingIndicator.querySelector('.loading-text');
+            
+            loadingIndicator.style.display = 'flex';
+            loadingText.textContent = '모델 2 데이터 로딩 중...';
+            
+            document.getElementById('load-model2').disabled = true;
+            
+            // GeoJSON 데이터 로드
+            fetch(model2Path)
+                .then(response => response.json())
+                .then(data => {
+                    console.log('모델 2 데이터 로드 완료');
+                    
+                    // 소스 추가
+                    map.addSource('model2-source', {
+                        'type': 'geojson',
+                        'data': data
+                    });
+                    
+                    // 레이어 추가
+                    map.addLayer({
+                        'id': 'model2-layer',
+                        'type': 'fill',
+                        'source': 'model2-source',
+                        'paint': {
+                            'fill-color': '#33A1FF',
+                            'fill-opacity': 0.7,
+                            'fill-outline-color': '#0000FF'
+                        }
+                    });
+                    
+                    // 상태 업데이트
+                    model2Loaded = true;
+                    document.getElementById('model2-count').textContent = data.features.length;
+                    document.getElementById('model2').disabled = false;
+                    
+                    // 모델 3 로드 버튼 활성화
+                    document.getElementById('load-model3').disabled = false;
+                    
+                    // 모델 3 자동 로드
+                    loadModel3();
+                    
+                    // 로딩 인디케이터 숨기기
+                    loadingIndicator.style.display = 'none';
+                })
+                .catch(error => {
+                    console.error('모델 2 데이터 로드 오류:', error);
+                    loadingText.textContent = '모델 2 데이터 로드 실패';
+                    setTimeout(() => {
+                        loadingIndicator.style.display = 'none';
+                        document.getElementById('load-model2').disabled = false;
+                    }, 2000);
+                });
+        }
+
+        // 모델 3 데이터 로드 함수
+        function loadModel3() {
+            if (model3Loaded) return;
+            
+            const loadingIndicator = document.getElementById('loading-indicator');
+            const loadingText = loadingIndicator.querySelector('.loading-text');
+            
+            loadingIndicator.style.display = 'flex';
+            loadingText.textContent = '모델 3 데이터 로딩 중...';
+            
+            document.getElementById('load-model3').disabled = true;
+            
+            // GeoJSON 데이터 로드
+            fetch(model3Path)
+                .then(response => response.json())
+                .then(data => {
+                    console.log('모델 3 데이터 로드 완료');
+                    
+                    // 소스 추가
+                    map.addSource('model3-source', {
+                        'type': 'geojson',
+                        'data': data
+                    });
+                    
+                    // 레이어 추가
+                    map.addLayer({
+                        'id': 'model3-layer',
+                        'type': 'fill',
+                        'source': 'model3-source',
+                        'paint': {
+                            'fill-color': '#33FF57',
+                            'fill-opacity': 0.7,
+                            'fill-outline-color': '#00FF00'
+                        }
+                    });
+                    
+                    // 상태 업데이트
+                    model3Loaded = true;
+                    document.getElementById('model3-count').textContent = data.features.length;
+                    document.getElementById('model3').disabled = false;
+                    
+                    // 로딩 인디케이터 숨기기
+                    loadingIndicator.style.display = 'none';
+                })
+                .catch(error => {
+                    console.error('모델 3 데이터 로드 오류:', error);
+                    loadingText.textContent = '모델 3 데이터 로드 실패';
+                    setTimeout(() => {
+                        loadingIndicator.style.display = 'none';
+                        document.getElementById('load-model3').disabled = false;
+                    }, 2000);
+                });
+        }
+        
+        // 레이어 토글 이벤트 리스너
+        document.getElementById('model1').addEventListener('change', function(e) {
+            if (model1Loaded) {
+                map.setLayoutProperty('model1-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+            }
         });
-        console.log("YOLOv11 layer loaded with", data.features.length, "features");
-      })
-      .catch(err => console.error("YOLOv11 fetch error:", err));
-  </script>
+        
+        document.getElementById('model2').addEventListener('change', function(e) {
+            if (model2Loaded) {
+                map.setLayoutProperty('model2-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+            }
+        });
+        
+        document.getElementById('model3').addEventListener('change', function(e) {
+            if (model3Loaded) {
+                map.setLayoutProperty('model3-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+            }
+        });
+        
+        document.getElementById('drone-imagery').addEventListener('change', function(e) {
+            if (tilesetLoaded) {
+                map.setLayoutProperty('raster-tiles', 'visibility', e.target.checked ? 'visible' : 'none');
+            }
+        });
+        
+        // 정사영상 투명도 조절
+        document.getElementById('opacity-slider').addEventListener('input', function(e) {
+            const opacity = parseInt(e.target.value, 10) / 100;
+            if (tilesetLoaded) {
+                map.setPaintProperty('raster-tiles', 'raster-opacity', opacity);
+            }
+            document.getElementById('opacity-value').textContent = e.target.value + '%';
+        });
+        
+        // 데이터 로드 버튼 이벤트 리스너
+        document.getElementById('load-model1').addEventListener('click', loadModel1);
+        document.getElementById('load-model2').addEventListener('click', loadModel2);
+        document.getElementById('load-model3').addEventListener('click', loadModel3);
+    </script>
 </body>
 </html>
